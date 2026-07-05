@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MantleIQ — Research Co-Pilot</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#07080C;font-family:'Inter',system-ui,sans-serif;color:#E8EDF5;}
+input,button,select{font-family:inherit;}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:#1C2232;border-radius:2px;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes flowDot{0%{transform:translateY(0);opacity:0}15%{opacity:1}85%{opacity:1}100%{transform:translateY(22px);opacity:0}}
+@keyframes nodePulse{0%,100%{box-shadow:0 0 0 0 rgba(0,217,168,0.4)}70%{box-shadow:0 0 0 8px rgba(0,217,168,0)}}
+.tab-nav{overflow-x:auto;display:flex;white-space:nowrap;-webkit-overflow-scrolling:touch;}
+.tab-nav::-webkit-scrollbar{height:0;}
+input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:2px;background:#1C2232;outline:none;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#00D9A8;cursor:pointer;}
+select{background:#161B26;border:1px solid #252D3D;color:#E8EDF5;padding:8px 12px;border-radius:7px;width:100%;outline:none;font-size:13px;cursor:pointer;}
+select option{background:#161B26;}
+.node-card{transition:all 0.2s;cursor:pointer;}
+.node-card:hover{transform:translateX(3px);}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback}=React;
+
+const C={bg:'#07080C',surface:'#0F1117',surfaceHover:'#141820',surfaceAlt:'#161B26',
+  border:'#1C2232',borderLight:'#252D3D',accent:'#00D9A8',accentDim:'rgba(0,217,168,0.07)',
+  text:'#E8EDF5',textMuted:'#7A8499',textDim:'#3D4558',
+  red:'#FF4D6D',redDim:'rgba(255,77,109,0.08)',yellow:'#F59E0B',green:'#10B981'};
+
+const PALETTE=['#00D9A8','#4D8EFF','#F59E0B','#FF4D6D','#A78BFA','#34D399','#FB923C','#38BDF8'];
+
+const fmt=(n)=>{if(!n&&n!==0)return'N/A';if(n>=1e9)return`$${(n/1e9).toFixed(2)}B`;if(n>=1e6)return`$${(n/1e6).toFixed(2)}M`;if(n>=1e3)return`$${(n/1e3).toFixed(1)}K`;return`$${n.toFixed(2)}`;};
+const fmtPct=(n)=>(!n&&n!==0)?'—':`${n.toFixed(2)}%`;
+
+function LogoIcon({size=34}){return(<svg width={size} height={size} viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="34" height="34" rx="8" fill="#0F1117" stroke="#00D9A8" strokeWidth="1.2"/><circle cx="11.5" cy="10.5" r="1.8" fill="#00D9A8" opacity="0.55"/><circle cx="17" cy="9" r="2.2" fill="#00D9A8"/><circle cx="22.5" cy="10.5" r="1.8" fill="#00D9A8" opacity="0.55"/><line x1="11.5" y1="10.5" x2="17" y2="9" stroke="#00D9A8" strokeWidth="0.7" opacity="0.3"/><line x1="17" y1="9" x2="22.5" y2="10.5" stroke="#00D9A8" strokeWidth="0.7" opacity="0.3"/><text x="17" y="27.5" textAnchor="middle" fontFamily="system-ui,-apple-system,sans-serif" fontWeight="800" fontSize="19" fill="#00D9A8" letterSpacing="-1">M</text></svg>);}
+
+function Spinner(){return(<div style={{padding:40,textAlign:'center',color:C.textMuted}}><div style={{width:20,height:20,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:'50%',animation:'spin 0.75s linear infinite',margin:'0 auto 10px'}}/><div style={{fontSize:12.5}}>Fetching live data…</div></div>);}
+
+async function fetchMantleData(){
+  const[protocolsRes,chainsRes,yieldsRes]=await Promise.all([fetch('https://api.llama.fi/protocols'),fetch('https://api.llama.fi/v2/chains'),fetch('https://yields.llama.fi/pools')]);
+  const protocols=await protocolsRes.json();const chains=await chainsRes.json();const yields=await yieldsRes.json();
+  const mantleProtocols=protocols.filter(p=>p.chains&&p.chains.includes('Mantle')).map(p=>({name:p.name,tvl:p.chainTvls?.Mantle||p.tvl||0,category:p.category||'Protocol'})).sort((a,b)=>b.tvl-a.tvl).slice(0,12);
+  const mantleChain=chains.find(c=>c.name==='Mantle');
+  const mantleYields=(yields.data||[]).filter(p=>p.chain==='Mantle'&&p.apy>0&&p.tvlUsd>5000).sort((a,b)=>b.tvlUsd-a.tvlUsd).slice(0,12);
+  return{protocols:mantleProtocols,chain:mantleChain,yields:mantleYields};
+}
+
+async function askClaude(messages,data){
+  const systemPrompt=`You are MantleIQ, a sharp AI research co-pilot for the Mantle DeFi ecosystem. You have live on-chain data from DeFiLlama (${new Date().toLocaleDateString()}).
+Chain TVL: ${data.chain?fmt(data.chain.tvl):'N/A'}
+Top Protocols: ${data.protocols.map((p,i)=>`${i+1}. ${p.name} (${p.category}): ${fmt(p.tvl)}`).join(', ')}
+Top Yields: ${data.yields.slice(0,5).map(y=>`${y.project} ${y.symbol}: ${fmtPct(y.apy)} APY`).join(', ')}
+Context: RWA TVL $247.5M Q1 2026 (+27.4% QoQ). Treasury $2.4B. Tokenized equities: TSLAx NVDAx AAPLx SPCXx USPXx. Protocols: Fluxion (RFQ execution), Merchant Moe (DEX), InsightX (AI prediction market), Bybit (distribution). ERC-8004 identity standard.
+Be analytical, accurate, concise. Plain text only. No markdown.`;
+  const response=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:systemPrompt,messages:messages.map(m=>({role:m.role,content:m.content}))})});
+  const result=await response.json();
+  return result.content?.[0]?.text||'Unable to get a response. Please try again.';
+}
+
+const PROMPTS=['What are the top protocols on Mantle by TVL right now?','Where is the best yield on Mantle today?','How does xStocks → Fluxion → Bybit work?','What is USPXx and why does it matter?','Compare Mantle RWA vs other L2s','What are the main risks of Mantle DeFi?'];
+const TOKENS=['TSLAx','NVDAx','AAPLx','SPCXx','USPXx','GOOGLx','METAx','MSFTx'];
+
+/* ─── DASHBOARD ─── */
+function Dashboard({data,loading,fetchError}){
+  const protos=data?.protocols||[];
+  return(<div>
+    {fetchError&&<div style={{background:C.redDim,border:'1px solid rgba(255,77,109,0.2)',borderRadius:10,padding:'11px 16px',marginBottom:20,fontSize:12.5,color:C.red}}>{fetchError}</div>}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:12,marginBottom:24}}>
+      {[{label:'Chain TVL',value:loading?'—':data?.chain?fmt(data.chain.tvl):'N/A',sub:'Live · DeFiLlama',hi:true},{label:'RWA TVL Milestone',value:'$247.5M',sub:'Q1 2026 · +27.4% QoQ'},{label:'Protocols',value:loading?'—':`${protos.length}`,sub:'Active on Mantle'},{label:'DAO Treasury',value:'$2.4B',sub:'Largest globally'}].map(s=>(
+        <div key={s.label} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:'16px 20px'}}>
+          <div style={{fontSize:10,color:C.textMuted,letterSpacing:'0.7px',textTransform:'uppercase',marginBottom:8}}>{s.label}</div>
+          <div style={{fontSize:24,fontWeight:700,letterSpacing:'-0.5px',color:s.hi?C.accent:C.text}}>{s.value}</div>
+          <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>{s.sub}</div>
+        </div>
+      ))}
+    </div>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,overflow:'hidden',marginBottom:18}}>
+      <div style={{padding:'14px 22px',borderBottom:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{fontWeight:600,fontSize:13.5}}>Top Protocols on Mantle</span>
+        <span style={{fontSize:10.5,color:C.textMuted}}>Live · DeFiLlama</span>
+      </div>
+      {loading?<Spinner/>:protos.length===0?<div style={{padding:36,textAlign:'center',color:C.textMuted}}>No data</div>:<>
+        <div style={{display:'grid',gridTemplateColumns:'36px 1fr 150px 130px',padding:'8px 22px',borderBottom:`1px solid ${C.border}`,fontSize:10,color:C.textMuted,textTransform:'uppercase',letterSpacing:'0.6px'}}><span>#</span><span>Protocol</span><span>Category</span><span style={{textAlign:'right'}}>TVL</span></div>
+        {protos.map((p,i)=><ProtocolRow key={p.name} p={p} i={i} last={i===protos.length-1}/>)}
+      </>}
+    </div>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:'16px 20px'}}>
+      <div style={{fontSize:10,color:C.textMuted,textTransform:'uppercase',letterSpacing:'0.7px',marginBottom:12}}>Live Tokenized Equities via xStocks</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:7,marginBottom:10}}>{TOKENS.map(t=><span key={t} style={{background:C.accentDim,color:C.accent,border:'1px solid rgba(0,217,168,0.18)',padding:'4px 11px',borderRadius:5,fontSize:12,fontWeight:600,fontFamily:'monospace'}}>{t}</span>)}</div>
+      <div style={{fontSize:11.5,color:C.textMuted}}>1:1 collateralized · Atomic RFQ · 24/7 on Fluxion + Merchant Moe</div>
+    </div>
+  </div>);
+}
+
+function ProtocolRow({p,i,last}){const[h,sH]=useState(false);return(<div onMouseEnter={()=>sH(true)} onMouseLeave={()=>sH(false)} style={{display:'grid',gridTemplateColumns:'36px 1fr 150px 130px',padding:'12px 22px',borderBottom:last?'none':`1px solid ${C.border}`,alignItems:'center',background:h?C.surfaceHover:'transparent',transition:'background 0.1s'}}><span style={{fontSize:11.5,color:C.textDim}}>{i+1}</span><span style={{fontWeight:500,fontSize:13}}>{p.name}</span><span><span style={{background:C.accentDim,color:C.accent,fontSize:10.5,padding:'2px 7px',borderRadius:4}}>{p.category}</span></span><span style={{textAlign:'right',fontFamily:'monospace',fontWeight:700,fontSize:13.5,color:p.tvl>1e7?C.accent:C.text}}>{fmt(p.tvl)}</span></div>);}
+
+/* ─── AI RESEARCH ─── */
+function Research({data,ready,messages,input,setInput,send,aiLoading,chatEndRef}){
+  return(<div style={{display:'grid',gridTemplateColumns:'1fr 255px',gap:18,height:'calc(100vh - 188px)',minHeight:480}}>
+    <div style={{display:'flex',flexDirection:'column',background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,overflow:'hidden'}}>
+      <div style={{padding:'9px 16px',borderBottom:`1px solid ${C.border}`,background:C.accentDim,display:'flex',alignItems:'center',gap:8}}>
+        <div style={{width:6,height:6,borderRadius:'50%',background:ready?C.accent:C.yellow,boxShadow:ready?`0 0 5px ${C.accent}`:'none'}}/>
+        <span style={{fontSize:11,color:C.accent}}>{ready?`Context loaded: ${data.protocols.length} protocols · ${data.yields.length} yield pools`:'Loading live data…'}</span>
+      </div>
+      <div style={{flex:1,overflow:'auto',padding:16,display:'flex',flexDirection:'column',gap:13}}>
+        {messages.length===0&&<div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:C.textMuted,textAlign:'center',padding:32}}><div style={{fontSize:34,marginBottom:12}}>🔍</div><div style={{fontWeight:600,color:C.text,fontSize:14,marginBottom:5}}>Ask anything about Mantle DeFi</div><div style={{fontSize:12.5}}>Live DeFiLlama data · Claude AI</div></div>}
+        {messages.map((m,i)=>(<div key={i} style={{animation:'fadeUp 0.2s ease',display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}><div style={{fontSize:9,color:C.textDim,marginBottom:3,letterSpacing:'0.5px',textTransform:'uppercase'}}>{m.role==='user'?'You':'MantleIQ'}</div><div style={{background:m.role==='user'?C.accent:C.surfaceAlt,color:m.role==='user'?'#07080C':C.text,padding:'10px 14px',fontSize:13,lineHeight:1.65,maxWidth:'84%',borderRadius:m.role==='user'?'11px 11px 3px 11px':'11px 11px 11px 3px'}}>{m.content}</div></div>))}
+        {aiLoading&&<div style={{display:'flex',alignItems:'center',gap:9}}><div style={{display:'flex',gap:4}}>{[0,.15,.3].map((d,i)=><div key={i} style={{width:5,height:5,borderRadius:'50%',background:C.accent,animation:`blink 1s ${d}s infinite`}}/>)}</div><span style={{fontSize:11.5,color:C.textMuted}}>Analyzing…</span></div>}
+        <div ref={chatEndRef}/>
+      </div>
+      <div style={{padding:'12px 14px',borderTop:`1px solid ${C.border}`,display:'flex',gap:9}}>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&send(input)} placeholder={ready?'Ask about Mantle DeFi…':'Loading…'} disabled={!ready||aiLoading} style={{flex:1,background:C.surfaceAlt,border:`1px solid ${C.borderLight}`,borderRadius:7,padding:'8px 12px',color:C.text,fontSize:13,outline:'none',opacity:ready?1:0.5}}/>
+        <button onClick={()=>send(input)} disabled={!ready||aiLoading||!input.trim()} style={{background:C.accent,color:'#07080C',border:'none',borderRadius:7,padding:'8px 16px',fontSize:12.5,fontWeight:700,cursor:'pointer',opacity:!ready||aiLoading||!input.trim()?0.4:1}}>Ask</button>
+      </div>
+    </div>
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:16}}>
+        <div style={{fontSize:10,color:C.textMuted,letterSpacing:'0.7px',textTransform:'uppercase',marginBottom:11}}>Research Prompts</div>
+        <div style={{display:'flex',flexDirection:'column',gap:6}}>{PROMPTS.map((p,i)=><PromptBtn key={i} label={p} onClick={()=>send(p)} disabled={!ready||aiLoading}/>)}</div>
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:16,fontSize:11.5,color:C.textMuted,lineHeight:1.65}}><div style={{fontWeight:600,color:C.text,marginBottom:7,fontSize:12.5}}>About MantleIQ</div>Live DeFiLlama data + Claude AI for Mantle research.<div style={{marginTop:10,color:C.textDim,fontSize:11}}>by @web3dothan · Mantle Research Challenge</div></div>
+    </div>
+  </div>);
+}
+
+function PromptBtn({label,onClick,disabled}){const[h,sH]=useState(false);return(<button onClick={onClick} disabled={disabled} onMouseEnter={()=>sH(true)} onMouseLeave={()=>sH(false)} style={{background:'none',border:`1px solid ${h?C.accent:C.border}`,borderRadius:7,padding:'8px 10px',color:h?C.text:C.textMuted,fontSize:11.5,cursor:disabled?'not-allowed':'pointer',textAlign:'left',lineHeight:1.4,transition:'all 0.15s',opacity:disabled?0.4:1}}>{label}</button>);}
+
+/* ─── YIELDS ─── */
+function Yields({data,loading}){
+  const yields=data?.yields||[];
+  return(<div>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,overflow:'hidden'}}>
+      <div style={{padding:'14px 22px',borderBottom:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:13.5}}>Live Yield Opportunities on Mantle</span><span style={{fontSize:10.5,color:C.textMuted}}>Sorted by TVL · Live · DeFiLlama</span></div>
+      {loading?<Spinner/>:yields.length===0?<div style={{padding:36,textAlign:'center',color:C.textMuted}}>No pools found</div>:<>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 110px 120px 90px',padding:'8px 22px',borderBottom:`1px solid ${C.border}`,fontSize:10,color:C.textMuted,textTransform:'uppercase',letterSpacing:'0.6px'}}><span>Pool</span><span style={{textAlign:'right'}}>APY</span><span style={{textAlign:'right'}}>TVL</span><span style={{textAlign:'right'}}>IL Risk</span></div>
+        {yields.map((y,i)=><YieldRow key={i} y={y} last={i===yields.length-1}/>)}
+      </>}
+    </div>
+    <div style={{marginTop:12,fontSize:11,color:C.textMuted,textAlign:'center'}}>Live from DeFiLlama. Always DYOR before depositing.</div>
+  </div>);
+}
+
+function YieldRow({y,last}){const[h,sH]=useState(false);const apyColor=y.apy>20?C.green:y.apy>8?C.accent:C.text;return(<div onMouseEnter={()=>sH(true)} onMouseLeave={()=>sH(false)} style={{display:'grid',gridTemplateColumns:'1fr 110px 120px 90px',padding:'12px 22px',borderBottom:last?'none':`1px solid ${C.border}`,alignItems:'center',background:h?C.surfaceHover:'transparent',transition:'background 0.1s'}}><div><div style={{fontWeight:500,fontSize:13}}>{y.symbol}</div><div style={{fontSize:11.5,color:C.textMuted,marginTop:1}}>{y.project}</div></div><div style={{textAlign:'right',fontWeight:700,fontSize:14,fontFamily:'monospace',color:apyColor}}>{fmtPct(y.apy)}</div><div style={{textAlign:'right',fontSize:12.5,fontFamily:'monospace',color:C.textMuted}}>{fmt(y.tvlUsd)}</div><div style={{textAlign:'right'}}><span style={{fontSize:10.5,padding:'2px 7px',borderRadius:4,background:y.ilRisk==='YES'?'rgba(255,77,109,0.1)':'rgba(16,185,129,0.1)',color:y.ilRisk==='YES'?C.red:C.green}}>{y.ilRisk==='YES'?'IL Risk':'No IL'}</span></div></div>);}
+
+/* ─── CALCULATOR ─── */
+function Calculator({data,loading}){
+  const[amount,setAmount]=useState('1000');
+  const[selectedIdx,setSelectedIdx]=useState(0);
+  const pools=data?.yields||[];
+  const pool=pools[selectedIdx];
+  const amt=parseFloat(amount)||0;
+  const calc=(days)=>pool?(amt*(pool.apy/100)*(days/365)).toFixed(2):'0.00';
+  const periods=[{label:'Daily',days:1},{label:'Weekly',days:7},{label:'Monthly',days:30},{label:'Yearly',days:365}];
+
+  return(<div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:24}}>
+        <div style={{fontWeight:600,fontSize:14,marginBottom:20}}>Yield Calculator</div>
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:11,color:C.textMuted,letterSpacing:'0.6px',textTransform:'uppercase',marginBottom:8}}>Investment Amount (USD)</div>
+          <div style={{position:'relative'}}>
+            <span style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',color:C.textMuted,fontSize:14}}>$</span>
+            <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} style={{width:'100%',background:C.surfaceAlt,border:`1px solid ${C.borderLight}`,borderRadius:8,padding:'10px 12px 10px 26px',color:C.text,fontSize:15,outline:'none',fontWeight:600}}/>
+          </div>
+        </div>
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,color:C.textMuted,letterSpacing:'0.6px',textTransform:'uppercase',marginBottom:8}}>Protocol / Pool</div>
+          {loading?<div style={{color:C.textMuted,fontSize:13}}>Loading pools…</div>:<select value={selectedIdx} onChange={e=>setSelectedIdx(parseInt(e.target.value))}>{pools.map((p,i)=><option key={i} value={i}>{p.project} — {p.symbol} ({fmtPct(p.apy)} APY)</option>)}</select>}
+        </div>
+        {pool&&<div style={{background:C.accentDim,border:`1px solid rgba(0,217,168,0.15)`,borderRadius:8,padding:'12px 14px'}}>
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>Selected Pool Details</div>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:13}}><span style={{color:C.textMuted}}>APY</span><span style={{color:C.accent,fontWeight:700}}>{fmtPct(pool.apy)}</span></div>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:13,marginTop:4}}><span style={{color:C.textMuted}}>Pool TVL</span><span style={{fontWeight:600}}>{fmt(pool.tvlUsd)}</span></div>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:13,marginTop:4}}><span style={{color:C.textMuted}}>IL Risk</span><span style={{color:pool.ilRisk==='YES'?C.red:C.green,fontWeight:600}}>{pool.ilRisk==='YES'?'Yes':'No'}</span></div>
+        </div>}
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{fontSize:11,color:C.textMuted,letterSpacing:'0.6px',textTransform:'uppercase',marginBottom:4}}>Projected Returns</div>
+        {periods.map(p=>(
+          <div key={p.label} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:'16px 20px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:13,color:C.textMuted}}>{p.label}</span>
+            <span style={{fontSize:22,fontWeight:700,fontFamily:'monospace',color:C.accent}}>${calc(p.days)}</span>
+          </div>
+        ))}
+        <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:'14px 18px',fontSize:11.5,color:C.textMuted,lineHeight:1.6}}>
+          ⚠️ APY rates fluctuate. These projections assume a constant rate and do not account for compounding, fees, or impermanent loss. Always do your own research.
+        </div>
+      </div>
+    </div>
+  </div>);
+}
+
+/* ─── TVL CHART ─── */
+function TVLChart({data,loading}){
+  const canvasRef=useRef(null);
+  const chartRef=useRef(null);
+
+  useEffect(()=>{
+    if(!data||loading)return;
+    const timeout=setTimeout(()=>{
+      if(!canvasRef.current)return;
+      if(chartRef.current){chartRef.current.destroy();chartRef.current=null;}
+      const protos=data.protocols.slice(0,10);
+      chartRef.current=new Chart(canvasRef.current,{
+        type:'bar',
+        data:{
+          labels:protos.map(p=>p.name),
+          datasets:[{label:'TVL',data:protos.map(p=>p.tvl),backgroundColor:protos.map((_,i)=>i===0?'#00D9A8':i<3?'rgba(0,217,168,0.55)':'rgba(0,217,168,0.28)'),borderRadius:4,borderSkipped:false}]
+        },
+        options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:(ctx)=>` ${fmt(ctx.raw)}`},backgroundColor:'#0F1117',borderColor:'#1C2232',borderWidth:1,titleColor:'#E8EDF5',bodyColor:'#7A8499'}},scales:{x:{ticks:{color:'#7A8499',callback:(v)=>fmt(v)},grid:{color:'#1C2232'},border:{color:'#1C2232'}},y:{ticks:{color:'#E8EDF5',font:{size:12}},grid:{display:false},border:{color:'#1C2232'}}}}
+      });
+    },80);
+    return()=>{clearTimeout(timeout);if(chartRef.current){chartRef.current.destroy();chartRef.current=null;}};
+  },[data,loading]);
+
+  return(<div>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:24,marginBottom:18}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <span style={{fontWeight:600,fontSize:14}}>Protocol TVL Comparison</span>
+        <span style={{fontSize:10.5,color:C.textMuted}}>Live · DeFiLlama · Top 10</span>
+      </div>
+      {loading?<Spinner/>:<div style={{height:380,position:'relative'}}><canvas ref={canvasRef}/></div>}
+    </div>
+    {!loading&&data?.protocols&&(
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12}}>
+        {[...new Set(data.protocols.map(p=>p.category))].slice(0,4).map(cat=>{
+          const total=data.protocols.filter(p=>p.category===cat).reduce((s,p)=>s+p.tvl,0);
+          return(<div key={cat} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:'14px 18px'}}><div style={{fontSize:10,color:C.textMuted,textTransform:'uppercase',letterSpacing:'0.6px',marginBottom:6}}>{cat}</div><div style={{fontSize:18,fontWeight:700,color:C.accent}}>{fmt(total)}</div><div style={{fontSize:11,color:C.textMuted,marginTop:3}}>combined TVL</div></div>);
+        })}
+      </div>
+    )}
+  </div>);
+}
+
+/* ─── RWA FLOW VISUALIZER ─── */
+const TRAD_NODES=[
+  {id:'t_issuer',label:'Issuer',desc:'The company or government creating the asset. No direct relationship with end investors.'},
+  {id:'t_bank',label:'Investment Bank',desc:'Underwrites the offering, coordinates distribution. Takes a fee. First intermediary layer.'},
+  {id:'t_custodian',label:'Custodian',desc:'Holds actual securities in custody. Your shares exist as ledger entries, not in your name.'},
+  {id:'t_exchange',label:'Exchange',desc:'Trading happens during market hours only (9:30am–4pm EST). Settlement takes T+1 to T+2 days.'},
+  {id:'t_investor',label:'Investor',desc:'Owns a claim through 3 intermediaries. Cannot use shares as DeFi collateral. Cannot trade 24/7.'},
+];
+const MANTLE_NODES=[
+  {id:'m_issuer',label:'Issuer',desc:'Same asset originator as TradFi — but what happens next is fundamentally different.'},
+  {id:'m_xstocks',label:'xStocks',desc:'Tokenizes equities 1:1 with actual custodied shares. Uses Atomic RFQ to price directly from issuers — no AMM slippage. Mints TSLAx, AAPLx, SPCXx, USPXx (Franklin Templeton ETF, $1.98B AUM).'},
+  {id:'m_fluxion',label:'Fluxion + Merchant Moe',desc:'Fluxion provides RFQ-based order routing for zero-slippage execution. Merchant Moe is Mantle\'s primary DEX. Together: instant 24/7 trading with institutional-grade pricing.'},
+  {id:'m_bybit',label:'Bybit',desc:'Mass distribution to tens of millions of users globally. The layer most tokenization protocols skip entirely. Brings tokenized equities to a retail base that already has capital.'},
+  {id:'m_wallet',label:'Self-Custody Wallet',desc:'Direct onchain ownership — not a claim through intermediaries. The asset lives in your wallet, with full cryptographic proof of ownership.'},
+  {id:'m_defi',label:'DeFi Protocols',desc:'The composability layer that doesn\'t exist in TradFi. Tokenized shares can be collateral, deposited in yield vaults, or combined with other DeFi instruments. This is the holding-as-primitive shift.'},
+  {id:'m_insightx',label:'InsightX',desc:'AI-native prediction market on Mantle. Structured market intelligence around the same assets being traded — signals, sentiment, and onchain prediction. TradFi has never connected information and capital this way.'},
+];
+
+function FlowConnector({color,delay}){return(<div style={{position:'relative',width:2,height:28,background:color,opacity:0.25,margin:'4px auto'}}><div style={{position:'absolute',width:7,height:7,borderRadius:'50%',background:color,left:-2.5,animation:`flowDot 1.8s ${delay||0}s infinite ease-in-out`}}/></div>);}
+
+function RWAFlow(){
+  const[activeNode,setActiveNode]=useState(null);
+  const toggle=(id)=>setActiveNode(prev=>prev===id?null:id);
+
+  return(<div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,marginBottom:16}}>
+      {/* TradFi */}
+      <div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+          <span style={{fontWeight:700,fontSize:13,color:'#FF6B8A'}}>Traditional Finance</span>
+          <span style={{fontSize:10.5,background:'rgba(255,77,109,0.1)',color:C.red,padding:'3px 8px',borderRadius:4}}>5 intermediaries</span>
+        </div>
+        {TRAD_NODES.map((n,i)=>(
+          <div key={n.id}>
+            <div className="node-card" onClick={()=>toggle(n.id)} style={{background:C.surface,border:`1px solid ${activeNode===n.id?C.red:C.border}`,borderRadius:9,padding:'11px 14px',transition:'all 0.2s'}}>
+              <div style={{fontSize:13,fontWeight:500,color:activeNode===n.id?C.red:C.text}}>{n.label}</div>
+              {activeNode===n.id&&<div style={{fontSize:11.5,color:C.textMuted,marginTop:6,lineHeight:1.6,animation:'fadeUp 0.15s ease'}}>{n.desc}</div>}
+            </div>
+            {i<TRAD_NODES.length-1&&<FlowConnector color={C.red} delay={i*0.3}/>}
+          </div>
+        ))}
+        <div style={{background:'rgba(255,77,109,0.06)',border:`1px solid rgba(255,77,109,0.15)`,borderRadius:8,padding:'10px 14px',marginTop:12,fontSize:11.5,color:C.red}}>Terminal. No composability beyond holding.</div>
+      </div>
+      {/* Mantle */}
+      <div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+          <span style={{fontWeight:700,fontSize:13,color:C.accent}}>Mantle Ecosystem</span>
+          <span style={{fontSize:10.5,background:C.accentDim,color:C.accent,padding:'3px 8px',borderRadius:4}}>7 layers → composable</span>
+        </div>
+        {MANTLE_NODES.map((n,i)=>(
+          <div key={n.id}>
+            <div className="node-card" onClick={()=>toggle(n.id)} style={{background:C.surface,border:`1px solid ${activeNode===n.id?C.accent:C.border}`,borderRadius:9,padding:'11px 14px',transition:'all 0.2s',animation:activeNode===n.id?'nodePulse 2s infinite':'none'}}>
+              <div style={{fontSize:13,fontWeight:600,color:activeNode===n.id?C.accent:C.text}}>{n.label}</div>
+              {activeNode===n.id&&<div style={{fontSize:11.5,color:C.textMuted,marginTop:6,lineHeight:1.6,animation:'fadeUp 0.15s ease'}}>{n.desc}</div>}
+            </div>
+            {i<MANTLE_NODES.length-1&&<FlowConnector color={C.accent} delay={i*0.2}/>}
+          </div>
+        ))}
+        <div style={{background:C.accentDim,border:`1px solid rgba(0,217,168,0.15)`,borderRadius:8,padding:'10px 14px',marginTop:12,fontSize:11.5,color:C.accent}}>Composable. 24/7. Wallet-native ownership.</div>
+      </div>
+    </div>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:'14px 20px',fontSize:12,color:C.textMuted,textAlign:'center'}}>
+      👆 Click any node to expand. <span style={{color:C.accent}}>The extra 2 Mantle layers (DeFi + InsightX) are capabilities</span>, not intermediaries — they compound the value of ownership rather than fragmenting it.
+    </div>
+  </div>);
+}
+
+/* ─── PORTFOLIO BUILDER ─── */
+function DonutChart({items}){
+  if(!items||items.length===0)return null;
+  const cx=90,cy=90,outerR=78,innerR=48;
+  let angle=-Math.PI/2;
+  const total=items.reduce((s,i)=>s+i.pct,0)||1;
+  return(<svg width="180" height="180" viewBox="0 0 180 180">
+    {items.map((item,idx)=>{
+      const frac=item.pct/total;
+      if(frac<=0.001)return null;
+      const sweep=frac*2*Math.PI;
+      const startA=angle;const endA=angle+sweep;angle=endA;
+      const cos1=Math.cos(startA),sin1=Math.sin(startA),cos2=Math.cos(endA),sin2=Math.sin(endA);
+      const large=sweep>Math.PI?1:0;
+      const d=`M ${cx+outerR*cos1} ${cy+outerR*sin1} A ${outerR} ${outerR} 0 ${large} 1 ${cx+outerR*cos2} ${cy+outerR*sin2} L ${cx+innerR*cos2} ${cy+innerR*sin2} A ${innerR} ${innerR} 0 ${large} 0 ${cx+innerR*cos1} ${cy+innerR*sin1} Z`;
+      return<path key={idx} d={d} fill={item.color} opacity="0.9"/>;
+    })}
+    <circle cx={cx} cy={cy} r={innerR} fill="#0F1117"/>
+  </svg>);
+}
+
+function Portfolio({data,loading}){
+  const[allocations,setAllocations]=useState({});
+  const pools=(data?.yields||[]).slice(0,8);
+  const isSelected=(id)=>allocations[id]!==undefined;
+
+  const togglePool=(id)=>{
+    if(isSelected(id)){const n={...allocations};delete n[id];setAllocations(n);}
+    else{const count=Object.keys(allocations).length+1;const even=Math.floor(100/count);const n={};Object.keys(allocations).forEach(k=>n[k]=even);n[id]=100-even*(count-1);setAllocations(n);}
+  };
+  const updateAlloc=(id,val)=>setAllocations(prev=>({...prev,[id]:Math.max(0,Math.min(100,parseFloat(val)||0))}));
+
+  const selected=Object.keys(allocations);
+  const totalAlloc=selected.reduce((s,id)=>s+(allocations[id]||0),0);
+  const blendedAPY=selected.reduce((sum,id)=>{const idx=parseInt(id.replace('pool_',''));const pool=pools[idx];return pool?sum+(pool.apy*(allocations[id]||0)/100):sum;},0);
+  const totalTVL=selected.reduce((sum,id)=>{const idx=parseInt(id.replace('pool_',''));const pool=pools[idx];return pool?sum+pool.tvlUsd:sum;},0);
+
+  const donutItems=selected.map((id,i)=>({label:pools[parseInt(id.replace('pool_',''))]?.symbol||id,pct:allocations[id]||0,color:PALETTE[i%PALETTE.length]}));
+
+  return(<div style={{display:'grid',gridTemplateColumns:'1fr 280px',gap:20}}>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,overflow:'hidden'}}>
+      <div style={{padding:'14px 22px',borderBottom:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{fontWeight:600,fontSize:13.5}}>Select Pools & Allocate</span>
+        {totalAlloc>0&&<span style={{fontSize:12,color:totalAlloc>100?C.red:totalAlloc===100?C.green:C.yellow}}>{totalAlloc.toFixed(0)}% allocated</span>}
+      </div>
+      {loading?<Spinner/>:pools.length===0?<div style={{padding:36,textAlign:'center',color:C.textMuted}}>No pools available</div>:
+        pools.map((pool,i)=>{
+          const id=`pool_${i}`;const sel=isSelected(id);
+          return(<div key={id} style={{padding:'14px 22px',borderBottom:i<pools.length-1?`1px solid ${C.border}`:'none',background:sel?'rgba(0,217,168,0.03)':'transparent',transition:'background 0.15s'}}>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:sel?12:0}}>
+              <div onClick={()=>togglePool(id)} style={{width:18,height:18,borderRadius:4,border:`2px solid ${sel?C.accent:C.border}`,background:sel?C.accent:'none',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',transition:'all 0.15s'}}>
+                {sel&&<span style={{fontSize:10,color:'#07080C',fontWeight:800}}>✓</span>}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:500,fontSize:13}}>{pool.symbol} <span style={{color:C.textMuted,fontWeight:400,fontSize:12}}>· {pool.project}</span></div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontWeight:700,fontSize:13,fontFamily:'monospace',color:pool.apy>20?C.green:pool.apy>8?C.accent:C.text}}>{fmtPct(pool.apy)}</div>
+                <div style={{fontSize:10.5,color:C.textMuted}}>APY</div>
+              </div>
+            </div>
+            {sel&&<div style={{paddingLeft:30}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:6,fontSize:12}}>
+                <span style={{color:C.textMuted}}>Allocation</span>
+                <span style={{color:PALETTE[Object.keys(allocations).indexOf(id)%PALETTE.length],fontWeight:700}}>{(allocations[id]||0).toFixed(0)}%</span>
+              </div>
+              <input type="range" min="0" max="100" value={allocations[id]||0} onChange={e=>updateAlloc(id,e.target.value)} style={{'--thumb-color':PALETTE[Object.keys(allocations).indexOf(id)%PALETTE.length]}}/>
+            </div>}
+          </div>);
+        })
+      }
+    </div>
+
+    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:20}}>
+        {selected.length===0?(
+          <div style={{textAlign:'center',padding:'20px 0',color:C.textMuted}}>
+            <div style={{fontSize:28,marginBottom:10}}>📊</div>
+            <div style={{fontSize:13}}>Select pools on the left to build your portfolio</div>
+          </div>
+        ):(
+          <>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:16}}>
+              <DonutChart items={donutItems}/>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
+              {donutItems.map((item,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:8,fontSize:12}}>
+                  <div style={{width:10,height:10,borderRadius:2,background:item.color,flexShrink:0}}/>
+                  <span style={{flex:1,color:C.textMuted}}>{item.label}</span>
+                  <span style={{color:C.text,fontWeight:600}}>{item.pct.toFixed(0)}%</span>
+                </div>
+              ))}
+            </div>
+            <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,display:'flex',flexDirection:'column',gap:8}}>
+              {[{label:'Blended APY',value:fmtPct(blendedAPY),color:blendedAPY>15?C.green:C.accent},{label:'Total Pool TVL',value:fmt(totalTVL),color:C.text},{label:'Pools Selected',value:`${selected.length}`,color:C.text},{label:'Total Allocated',value:`${totalAlloc.toFixed(0)}%`,color:totalAlloc>100?C.red:totalAlloc===100?C.green:C.yellow}].map(m=>(
+                <div key={m.label} style={{display:'flex',justifyContent:'space-between',fontSize:12.5}}>
+                  <span style={{color:C.textMuted}}>{m.label}</span>
+                  <span style={{fontWeight:700,fontFamily:'monospace',color:m.color}}>{m.value}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:14,fontSize:11.5,color:C.textMuted,lineHeight:1.6}}>
+        ⚠️ Blended APY assumes equal compounding across pools. IL risk and fees not included. Rates change constantly. DYOR.
+      </div>
+    </div>
+  </div>);
+}
+
+/* ─── MAIN APP ─── */
+const ALL_TABS=[['dashboard','Dashboard'],['research','AI Research'],['yields','Yields'],['calculator','Calculator'],['tvlchart','TVL Chart'],['rwaflow','RWA Flow'],['portfolio','Portfolio']];
+
+function MantleIQ(){
+  const[tab,setTab]=useState('dashboard');
+  const[data,setData]=useState(null);
+  const[loading,setLoading]=useState(true);
+  const[fetchError,setFetchError]=useState(null);
+  const[messages,setMessages]=useState([]);
+  const[input,setInput]=useState('');
+  const[aiLoading,setAiLoading]=useState(false);
+  const chatEndRef=useRef(null);
+
+  useEffect(()=>{fetchMantleData().then(setData).catch(e=>setFetchError(e.message)).finally(()=>setLoading(false));},[]);
+  useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:'smooth'});},[messages,aiLoading]);
+
+  const send=async(text)=>{
+    const q=text.trim();if(!q||aiLoading||!data)return;
+    const next=[...messages,{role:'user',content:q}];setMessages(next);setInput('');setAiLoading(true);
+    try{const reply=await askClaude(next,data);setMessages(prev=>[...prev,{role:'assistant',content:reply}]);}
+    catch{setMessages(prev=>[...prev,{role:'assistant',content:'Something went wrong. Please try again.'}]);}
+    finally{setAiLoading(false);}
+  };
+  const ready=!loading&&!!data;
+
+  return(<div style={{background:C.bg,minHeight:'100vh',color:C.text}}>
+    <div style={{borderBottom:`1px solid ${C.border}`,padding:'0 24px',height:54,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+      <div style={{display:'flex',alignItems:'center',gap:11}}>
+        <LogoIcon size={32}/>
+        <div><div style={{fontWeight:700,fontSize:14.5,letterSpacing:'-0.4px'}}>MantleIQ</div><div style={{fontSize:9.5,color:C.textMuted,letterSpacing:'0.9px',textTransform:'uppercase'}}>Research Co-Pilot</div></div>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:7}}>
+        <div style={{width:7,height:7,borderRadius:'50%',background:loading?C.yellow:fetchError?C.red:C.accent,boxShadow:(!loading&&!fetchError)?`0 0 6px ${C.accent}`:'none',animation:loading?'blink 1s infinite':'none'}}/>
+        <span style={{fontSize:11,color:C.textMuted}}>{loading?'Fetching live data…':fetchError?'Data error':`Live · ${data?.protocols?.length||0} protocols`}</span>
+      </div>
+    </div>
+    <div className="tab-nav" style={{borderBottom:`1px solid ${C.border}`,padding:'0 24px'}}>
+      {ALL_TABS.map(([id,label])=>(
+        <button key={id} onClick={()=>setTab(id)} style={{background:'none',border:'none',cursor:'pointer',padding:'11px 14px',marginBottom:-1,color:tab===id?C.accent:C.textMuted,fontSize:12.5,fontWeight:tab===id?600:400,borderBottom:tab===id?`2px solid ${C.accent}`:'2px solid transparent',transition:'color 0.15s',whiteSpace:'nowrap'}}>{label}</button>
+      ))}
+    </div>
+    <div style={{padding:'22px',maxWidth:1060,margin:'0 auto'}}>
+      {tab==='dashboard'&&<Dashboard data={data} loading={loading} fetchError={fetchError}/>}
+      {tab==='research'&&<Research data={data} ready={ready} messages={messages} input={input} setInput={setInput} send={send} aiLoading={aiLoading} chatEndRef={chatEndRef}/>}
+      {tab==='yields'&&<Yields data={data} loading={loading}/>}
+      {tab==='calculator'&&<Calculator data={data} loading={loading}/>}
+      {tab==='tvlchart'&&<TVLChart data={data} loading={loading}/>}
+      {tab==='rwaflow'&&<RWAFlow/>}
+      {tab==='portfolio'&&<Portfolio data={data} loading={loading}/>}
+    </div>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<MantleIQ/>);
+  </script>
+</body>
+</html>
